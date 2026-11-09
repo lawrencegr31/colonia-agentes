@@ -56,6 +56,19 @@ canvas#mapa.arrastrando { cursor: grabbing; }
 #inspector ul { margin: 0; padding: 0; list-style: none; max-height: 120px; overflow: auto; font-size: 12px; }
 #inspector li { display: grid; grid-template-columns: 44px 1fr; gap: 6px; padding: 2px 0; border-top: 1px solid #2c2c2c; }
 #inspector li span:first-child { color: var(--tenue); font-variant-numeric: tabular-nums; }
+.orden { display: grid; gap: 6px; border-top: 1px solid #3a3a3a; padding-top: 8px; }
+.orden label { font-weight: 600; color: var(--resalte); }
+.orden textarea, .nuevo select, .nuevo textarea { font: inherit; color: var(--texto); background: #121212; border: 1px solid #555; padding: 6px 8px; width: 100%; resize: vertical; }
+.orden textarea:focus-visible, .nuevo select:focus-visible, .nuevo textarea:focus-visible { outline: 2px solid var(--resalte); outline-offset: 0; }
+.btn { font: inherit; color: var(--texto); background: #4f6b3a; border: 1px solid #7a9a5a; padding: 5px 14px; cursor: pointer; }
+.btn:hover { filter: brightness(1.15); }
+.btn:disabled { opacity: .5; cursor: default; }
+.btn.gris { background: var(--boton); border-color: #555; font-size: 12px; padding: 4px 10px; }
+.fila-botones { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.nota { color: var(--tenue); font-size: 12px; }
+.respuesta { white-space: pre-wrap; background: #121212; border: 1px solid #333; padding: 6px 8px; max-height: 160px; overflow: auto; font-size: 12.5px; }
+.error-orden { color: #ff9b7a; font-size: 12.5px; white-space: pre-wrap; }
+.nuevo { display: grid; gap: 8px; max-width: 640px; }
 .etq { display: inline-block; padding: 0 6px; font-size: 12px; border: 1px solid #555; }
 
 #pestanas { position: fixed; left: 0; right: 0; bottom: 0; height: 36px; background: #262626; border-top: 1px solid #4a4a4a; display: flex; gap: 2px; padding: 3px 4px; }
@@ -90,6 +103,7 @@ button:focus-visible, .retrato:focus-visible, .alerta:focus-visible { outline: 2
   <button id="tab-trabajo" aria-pressed="false">Trabajo</button>
   <button id="tab-registro" aria-pressed="false">Registro</button>
   <button id="tab-ayuda" aria-pressed="false">Ayuda</button>
+  <button id="tab-nuevo" aria-pressed="false">+ Nuevo colono</button>
   <span class="der" id="estado-con">Conectando…</span>
 </nav>
 
@@ -106,6 +120,8 @@ const pawns = new Map(); // id -> estado visual {x,y,tx,ty}
 let salas = [];          // [{nombre, x, y}] en casillas
 let firmaSalas = "";
 let ocultas = 0;
+let ultimoEstado = {};
+const TOKEN = "__COLONIA_TOKEN__";
 let suelo = null;        // canvas pre-dibujado
 let mundoW = 0, mundoH = 0;
 let cam = { x: 0, y: 0, z: 1, auto: true };
@@ -475,18 +491,46 @@ function pintarAlertas() {
     if (c.actividad === "permiso") items.push(['<div class="alerta fuerte" tabindex="0" data-id="' + c.id + '">¿' + esc(c.nombre) + " te necesita? Revisa su terminal (" + esc(c.sala) + ")</div>"]);
     else if (c.actividad === "esperar" && c.edadSeg < 3 * 3600) items.push(['<div class="alerta" tabindex="0" data-id="' + c.id + '">' + esc(c.nombre) + " terminó y espera órdenes</div>"]);
   }
+  for (const n of ultimoEstado.nuevos || []) {
+    const sala = n.cwd.split(/[\\/]/).filter(Boolean).pop();
+    if (n.enCurso) items.push('<div class="alerta" data-nuevo="1">Llegando un colono nuevo a ' + esc(sala) + "…</div>");
+    else if (n.error) items.push('<div class="alerta fuerte" data-nuevo="1">No pude crear el colono en ' + esc(sala) + "</div>");
+  }
   el.innerHTML = items.join("");
-  for (const a of el.children) a.addEventListener("click", () => seleccionar(a.dataset.id, true));
+  for (const a of el.children) a.addEventListener("click", () => { if (a.dataset.id) seleccionar(a.dataset.id, true); else { ventana = "nuevo"; pintarTodo(); } });
 }
 
 function pintarInspector() {
   const el = document.getElementById("inspector");
   const c = colonos.find((x) => x.id === seleccionado);
-  if (!c || ventana) { el.hidden = true; return; }
+  if (!c || ventana) { el.hidden = true; el.dataset.id = ""; return; }
   el.hidden = false;
-  const acciones = (c.acciones || []).slice().reverse().slice(0, 8).map((a) =>
+  if (el.dataset.id !== c.id) {
+    el.dataset.id = c.id;
+    el.innerHTML = '<div id="insp-info" style="display:grid;gap:6px"></div>' + (c.padre ? "" :
+      '<div class="orden"><label for="orden-texto">Darle una orden</label>' +
+      '<textarea id="orden-texto" rows="3" placeholder="Ej: Escribe 3 ideas de video de terror y guárdalas en un archivo"></textarea>' +
+      '<div class="fila-botones"><button class="btn" id="orden-enviar">Enviar orden</button><span class="nota">Si tienes su terminal abierta, mejor escríbele ahí.</span></div>' +
+      '<div id="orden-estado"></div></div>');
+    const boton = document.getElementById("orden-enviar");
+    if (boton) {
+      const area = document.getElementById("orden-texto");
+      area.addEventListener("keydown", (e) => { if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) boton.click(); });
+      boton.addEventListener("click", async () => {
+        const texto = area.value.trim();
+        if (!texto) { area.focus(); return; }
+        boton.disabled = true;
+        const r = await enviarOrden({ sesion: c.id, texto });
+        boton.disabled = false;
+        if (r.ok) { area.value = ""; document.getElementById("orden-estado").innerHTML = '<span class="nota">Orden enviada. Mira cómo se pone a trabajar.</span>'; consultar(); }
+        else document.getElementById("orden-estado").innerHTML = '<div class="error-orden">' + esc(r.error) + "</div>";
+      });
+    }
+  }
+  const acciones = (c.acciones || []).slice().reverse().slice(0, 6).map((a) =>
     "<li><span>" + new Date(a.t).toLocaleTimeString("es-PE", { hour: "2-digit", minute: "2-digit", hour12: false }) + "</span><span>" + esc(verboDe(a.tipo)) + (a.detalle ? ": " + esc(a.detalle) : "") + "</span></li>").join("");
-  el.innerHTML =
+  const info = document.getElementById("insp-info");
+  info.innerHTML =
     "<h2><span>" + esc(c.nombre) + (c.padre ? ' <span class="etq">ayudante</span>' : "") + '</span><button aria-label="Cerrar">✕</button></h2>' +
     '<div class="fila"><span>Sala</span><span>' + esc(c.sala) + "</span></div>" +
     '<div class="fila"><span>Carpeta</span><span style="overflow-wrap:anywhere;font-size:12px;color:#bdbdbd">' + esc(c.cwd) + "</span></div>" +
@@ -494,14 +538,31 @@ function pintarInspector() {
     '<div class="fila"><span>Encargo</span><span>' + esc(c.titulo) + "</span></div>" +
     '<div class="fila"><span>Ahora</span><span><b>' + esc(c.verbo) + "</b>" + (c.detalle ? " · " + esc(c.detalle) : "") + "</span></div>" +
     '<div class="fila"><span>Última vez</span><span>' + hace(c.edadSeg) + "</span></div>" +
-    (c.ultimoTexto ? '<div class="dijo">“' + esc(c.ultimoTexto) + "”</div>" : "") +
+    (c.ultimoTexto && !(c.orden && !c.orden.enCurso) ? '<div class="dijo">“' + esc(c.ultimoTexto) + "”</div>" : "") +
     (acciones ? "<ul>" + acciones + "</ul>" : "") +
-    '<div><button class="ocultar" style="font:inherit;font-size:12px;color:var(--texto);background:var(--boton);border:1px solid #555;padding:4px 10px;cursor:pointer">Ocultar la sala ' + esc(c.sala) + "</button></div>";
-  el.querySelector("h2 button").addEventListener("click", () => { seleccionado = null; pintarTodo(); });
-  el.querySelector("button.ocultar").addEventListener("click", async () => {
+    '<div><button class="btn gris ocultar">Ocultar la sala ' + esc(c.sala) + "</button></div>";
+  info.querySelector("h2 button").addEventListener("click", () => { seleccionado = null; pintarTodo(); });
+  info.querySelector("button.ocultar").addEventListener("click", async () => {
     try { await fetch("/api/ocultar", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ sala: c.cwd }) }); } catch (_) {}
     seleccionado = null; consultar();
   });
+  const est = document.getElementById("orden-estado");
+  const boton = document.getElementById("orden-enviar");
+  if (est && c.orden) {
+    const o = c.orden;
+    if (boton) boton.disabled = o.enCurso;
+    if (o.enCurso) est.innerHTML = '<span class="nota">Trabajando en tu orden: “' + esc(o.texto.slice(0, 120)) + "”</span>";
+    else if (o.error && !o.salida) est.innerHTML = '<div class="error-orden">' + esc(o.error) + "</div>";
+    else est.innerHTML = '<div class="nota">Respuesta a “' + esc(o.texto.slice(0, 80)) + "”:</div>" + '<div class="respuesta">' + esc(o.salida || "(sin texto)") + "</div>";
+  }
+}
+
+async function enviarOrden(datos) {
+  try {
+    const r = await fetch("/api/orden", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(Object.assign({ token: TOKEN }, datos)) });
+    const j = await r.json().catch(() => ({}));
+    return r.ok ? { ok: true } : { ok: false, error: j.error || "No se pudo enviar la orden." };
+  } catch (_) { return { ok: false, error: "Se perdió la conexión con la colonia." }; }
 }
 
 function verboDe(tipo) {
@@ -511,8 +572,10 @@ function verboDe(tipo) {
 function pintarVentana() {
   const el = document.getElementById("ventana");
   for (const b of document.querySelectorAll("#pestanas button")) b.setAttribute("aria-pressed", String(b.id === "tab-" + ventana));
-  if (!ventana) { el.hidden = true; return; }
+  if (!ventana) { el.hidden = true; el.dataset.vista = ""; return; }
   el.hidden = false;
+  if (ventana === "nuevo") { pintarNuevo(el); return; }
+  el.dataset.vista = ventana;
   if (ventana === "trabajo") {
     const filas = colonos.map((c) => '<tr class="clic" data-id="' + c.id + '"><td>' + esc(c.nombre) + "</td><td>" + esc(c.sala) + "</td><td><b>" + esc(c.verbo) + "</b>" + (c.detalle ? " · " + esc(c.detalle) : "") + "</td><td>" + esc(c.titulo) + '</td><td class="num">' + hace(c.edadSeg) + "</td></tr>").join("");
     el.innerHTML = "<h3>Trabajo</h3>" + (filas ? '<div style="overflow-x:auto"><table><thead><tr><th>Colono</th><th>Sala</th><th>Haciendo</th><th>Encargo</th><th>Actividad</th></tr></thead><tbody>' + filas + "</tbody></table></div>" : "<p>No hay colonos todavía.</p>");
@@ -537,6 +600,8 @@ function pintarVentana() {
       "<tr><td>Silla con <b>!</b></td><td>Lleva rato quieto a mitad de una tarea: puede estar pidiéndote permiso. Revisa su terminal.</td></tr>" +
       "<tr><td>Cama</td><td>Sin actividad por más de 20 minutos</td></tr>" +
       "</tbody></table><p>Arrastra el mapa para moverte, usa la rueda del mouse para acercar y haz doble clic para volver a ver toda la colonia.</p>" +
+      "<h3 style=\"margin-top:14px\">Darles órdenes</h3>" +
+      "<p>Haz clic en un colono, escribe en <b>Darle una orden</b> y presiona <b>Enviar orden</b> (o Ctrl + Enter). El colono retoma su misma conversación, hace el trabajo y su respuesta aparece en el panel. Para poner a alguien a trabajar en otra tarea aparte, usa <b>+ Nuevo colono</b>. Si tienes la terminal de ese agente abierta, mejor escríbele ahí para que no trabajen dos veces sobre la misma conversación.</p>" +
       "<h3 style=\"margin-top:14px\">Dar funciones</h3>" +
       "<p>La función de un agente se escribe en un archivo <b>CLAUDE.md</b> dentro de su carpeta. Claude lo lee cada vez que empieza y la colonia muestra la línea que empieza con <b>Rol:</b> en el letrero de la sala. La forma más fácil: pídeselo al mismo agente en su terminal, por ejemplo: <i>“Crea un CLAUDE.md en esta carpeta. Primera línea: Rol: Productor de videos de salud y terror. Debajo, tus reglas de trabajo.”</i></p>" +
       "<h3 style=\"margin-top:14px\">Salas ocultas</h3>" +
@@ -544,6 +609,38 @@ function pintarVentana() {
       (ocultas ? '<button id="mostrar-todo" style="font:inherit;color:var(--texto);background:var(--boton);border:1px solid #555;padding:4px 10px;cursor:pointer">Volver a mostrar todas</button>' : "");
     const b = document.getElementById("mostrar-todo");
     if (b) b.addEventListener("click", async () => { try { await fetch("/api/mostrar-todo", { method: "POST" }); } catch (_) {} consultar(); });
+  }
+}
+
+function pintarNuevo(el) {
+  const carpetas = ultimoEstado.carpetas || [];
+  if (el.dataset.vista !== "nuevo") {
+    el.dataset.vista = "nuevo";
+    el.innerHTML = '<h3>Nuevo colono</h3><div class="nuevo">' +
+      '<p class="nota" style="margin:0">Elige la sala donde va a trabajar y qué quieres que haga. Aparecerá como un colono nuevo.</p>' +
+      '<label for="nuevo-sala">Sala</label><select id="nuevo-sala"></select>' +
+      '<label for="nuevo-texto">Su primera orden</label><textarea id="nuevo-texto" rows="3" placeholder="Ej: Busca las 5 noticias de salud pública más importantes de esta semana en Perú, con sus fuentes, y guárdalas en noticias.md"></textarea>' +
+      '<div class="fila-botones"><button class="btn" id="nuevo-enviar">Crear colono</button></div><div id="nuevo-estado"></div></div>';
+    document.getElementById("nuevo-enviar").addEventListener("click", async () => {
+      const cwd = document.getElementById("nuevo-sala").value, area = document.getElementById("nuevo-texto");
+      const texto = area.value.trim();
+      if (!cwd) return;
+      if (!texto) { area.focus(); return; }
+      const b = document.getElementById("nuevo-enviar"); b.disabled = true;
+      const r = await enviarOrden({ cwd, texto });
+      b.disabled = false;
+      const st = document.getElementById("nuevo-estado");
+      if (r.ok) { area.value = ""; st.innerHTML = '<span class="nota">Listo. En unos segundos llega el colono nuevo a su sala.</span>'; consultar(); }
+      else st.innerHTML = '<div class="error-orden">' + esc(r.error) + "</div>";
+    });
+  }
+  const sel = document.getElementById("nuevo-sala");
+  const firma = carpetas.join("|");
+  if (sel.dataset.firma !== firma) {
+    const actual = sel.value;
+    sel.innerHTML = carpetas.length ? carpetas.map((c) => '<option value="' + esc(c) + '">' + esc(c.split(/[\\/]/).filter(Boolean).pop()) + " · " + esc(c) + "</option>").join("") : '<option value="">No hay salas todavía</option>';
+    if (carpetas.includes(actual)) sel.value = actual;
+    sel.dataset.firma = firma;
   }
 }
 
@@ -573,6 +670,7 @@ async function consultar() {
     document.getElementById("estado-con").textContent = "En vivo · " + new Date().toLocaleTimeString("es-PE");
     colonos = d.colonos || [];
     ocultas = d.ocultas || 0;
+    ultimoEstado = d;
     const nombres = [...new Set(colonos.map((c) => c.sala))].sort((a, b) => a.localeCompare(b));
     const roles = {};
     for (const c of colonos) if (c.rol && !roles[c.sala]) roles[c.sala] = c.rol;
@@ -621,7 +719,7 @@ cv.addEventListener("wheel", (e) => {
   const [nx, ny] = aMundo(e.clientX, e.clientY);
   cam.x += mx - nx; cam.y += my - ny;
 }, { passive: false });
-for (const nombre of ["trabajo", "registro", "ayuda"]) {
+for (const nombre of ["trabajo", "registro", "ayuda", "nuevo"]) {
   document.getElementById("tab-" + nombre).addEventListener("click", () => { ventana = ventana === nombre ? null : nombre; pintarTodo(); });
 }
 document.addEventListener("keydown", (e) => { if (e.key === "Escape") { ventana = null; seleccionado = null; pintarTodo(); } });

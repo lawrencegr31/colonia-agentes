@@ -6,6 +6,8 @@ const http = require("http");
 const fs = require("fs");
 const path = require("path");
 const os = require("os");
+const crypto = require("crypto");
+const { spawn } = require("child_process");
 
 const PUERTO = Number(process.env.COLONIA_PUERTO || 4747);
 const CARPETA = process.env.COLONIA_SESIONES || path.join(os.homedir(), ".claude", "projects");
@@ -248,8 +250,53 @@ function listarSesiones() {
     c.nombre = "Ayudante de " + (jefe ? jefe.nombre : "otro");
     if (jefe && c.titulo === "Sesión sin título") c.titulo = jefe.titulo;
   }
+  // órdenes en curso o recientes
+  for (const c of out) {
+    const o = ordenes.get(c.id);
+    if (!o) continue;
+    c.orden = { texto: o.texto, enCurso: o.enCurso, inicio: o.inicio, fin: o.fin, salida: o.salida.trim().slice(-2500), error: o.error.trim().slice(-600) };
+    if (o.enCurso && ["esperar", "dormir", "permiso"].includes(c.actividad)) {
+      c.actividad = "pensar"; c.verbo = ACTIVIDADES.pensar.verbo + " en tu orden"; c.mueble = "silla"; c.detalle = "";
+    }
+  }
+  const nuevos = [];
+  for (const [k, o] of ordenes) if (k.startsWith("nuevo:") && (o.enCurso || Date.now() - o.fin < 120000)) nuevos.push({ cwd: o.cwd, texto: o.texto, enCurso: o.enCurso, error: o.error.trim().slice(-400) });
+  const carpetas = [...new Set(out.filter((c) => !c.padre).map((c) => c.cwd))].sort();
   out.sort((a, b) => a.edadSeg - b.edadSeg);
-  return { carpeta: CARPETA, generado: ahora, ocultas: ocultas.size, colonos: out };
+  return { carpeta: CARPETA, generado: ahora, ocultas: ocultas.size, carpetas, nuevos, colonos: out };
+}
+
+// ---------- órdenes: despertar a un agente con un pedido ----------
+// Se ejecuta "claude -p" en la carpeta del colono, retomando su misma conversación.
+const TOKEN = crypto.randomBytes(16).toString("hex"); // solo la página de la colonia lo conoce
+const ordenes = new Map(); // id de sesión (o "nuevo:...") -> {texto, cwd, inicio, fin, salida, error, enCurso}
+
+function binarioClaude() {
+  if (process.env.COLONIA_CLAUDE) return process.env.COLONIA_CLAUDE;
+  const local = path.join(os.homedir(), ".local", "bin", process.platform === "win32" ? "claude.exe" : "claude");
+  return fs.existsSync(local) ? local : "claude";
+}
+
+function lanzarOrden(clave, cwd, texto, sesion) {
+  const args = ["-p", texto];
+  if (sesion) args.push("--resume", sesion);
+  const o = { texto, cwd, inicio: Date.now(), fin: null, salida: "", error: "", enCurso: true, sesion: sesion || null };
+  ordenes.set(clave, o);
+  let hijo;
+  try { hijo = spawn(binarioClaude(), args, { cwd, windowsHide: true, env: process.env, stdio: ["ignore", "pipe", "pipe"] }); }
+  catch (e) { o.enCurso = false; o.fin = Date.now(); o.error = "No pude abrir Claude Code: " + e.message; return; }
+  const juntar = (campo) => (b) => { o[campo] = (o[campo] + b.toString("utf8")).slice(-6000); };
+  hijo.stdout.on("data", juntar("salida"));
+  hijo.stderr.on("data", juntar("error"));
+  hijo.on("error", (e) => { o.enCurso = false; o.fin = Date.now(); o.error = e.code === "ENOENT" ? "No encontré Claude Code en esta computadora." : String(e.message); });
+  hijo.on("close", (codigo) => { o.enCurso = false; o.fin = Date.now(); if (codigo && !o.error) o.error = "Claude terminó con un error (código " + codigo + ")."; });
+  console.log("Orden enviada en " + cwd + (sesion ? " (sesión " + sesion.slice(0, 8) + ")" : " (colono nuevo)") + ": " + texto.slice(0, 80));
+}
+
+function origenValido(req) {
+  const o = req.headers.origin;
+  if (!o) return true; // pedidos sin Origin vienen de la misma página
+  return o === "http://localhost:" + PUERTO || o === "http://127.0.0.1:" + PUERTO;
 }
 
 const PUBLICO = path.join(__dirname, "publico");
@@ -276,13 +323,42 @@ const server = http.createServer((req, res) => {
     });
     return;
   }
+  if (req.method === "POST" && url.pathname === "/api/orden") {
+    let cuerpo = "";
+    req.on("data", (c) => { cuerpo += c; if (cuerpo.length > 20000) req.destroy(); });
+    req.on("end", () => {
+      const responder = (code, obj) => { res.writeHead(code, { "content-type": "application/json; charset=utf-8" }); res.end(JSON.stringify(obj)); };
+      try {
+        if (!origenValido(req)) return responder(403, { error: "Origen no permitido." });
+        const { token, sesion, cwd, texto } = JSON.parse(cuerpo || "{}");
+        if (token !== TOKEN) return responder(403, { error: "La página está desactualizada. Recárgala (F5) y vuelve a intentar." });
+        if (typeof texto !== "string" || !texto.trim() || texto.length > 8000) return responder(400, { error: "Escribe la orden." });
+        const estado = listarSesiones();
+        if (sesion) {
+          const c = estado.colonos.find((x) => x.id === sesion && !x.padre);
+          if (!c) return responder(404, { error: "No encontré a ese colono." });
+          const prev = ordenes.get(sesion);
+          if (prev && prev.enCurso) return responder(409, { error: "Todavía está trabajando en tu orden anterior." });
+          if (!fs.existsSync(c.cwd)) return responder(404, { error: "Su carpeta ya no existe: " + c.cwd });
+          lanzarOrden(sesion, c.cwd, texto.trim(), sesion);
+        } else {
+          if (typeof cwd !== "string" || !estado.carpetas.includes(cwd)) return responder(400, { error: "Elige una de las salas de la colonia." });
+          if (!fs.existsSync(cwd)) return responder(404, { error: "Esa carpeta ya no existe: " + cwd });
+          lanzarOrden("nuevo:" + Date.now(), cwd, texto.trim(), null);
+        }
+        responder(200, { ok: true });
+      } catch (e) { responder(400, { error: "No entendí el pedido." }); }
+    });
+    return;
+  }
   const archivo = url.pathname === "/" ? "index.html" : url.pathname.slice(1);
   const ruta = path.join(PUBLICO, path.normalize(archivo).replace(/^(\.\.[\\/])+/, ""));
   if (!ruta.startsWith(PUBLICO)) { res.writeHead(403); return res.end(); }
   fs.readFile(ruta, (err, data) => {
     if (err) { res.writeHead(404); return res.end("No encontrado"); }
     const tipos = { ".html": "text/html; charset=utf-8", ".js": "text/javascript", ".css": "text/css", ".png": "image/png" };
-    res.writeHead(200, { "content-type": tipos[path.extname(ruta)] || "application/octet-stream" });
+    res.writeHead(200, { "content-type": tipos[path.extname(ruta)] || "application/octet-stream", "cache-control": "no-store" });
+    if (path.extname(ruta) === ".html") data = Buffer.from(data.toString("utf8").replace("__COLONIA_TOKEN__", TOKEN));
     res.end(data);
   });
 });

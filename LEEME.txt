@@ -13,6 +13,8 @@ Que muestra:
 - "?" = termino y espera tus ordenes.  "!" = lleva rato quieto a mitad de algo: revisa su terminal.
 - Cama = sin actividad por mas de 20 minutos.
 - Muestra las sesiones usadas en las ultimas 72 horas.
+- Para darle una orden: clic en el colono, escribe en "Darle una orden" y Enviar.
+- Para poner a trabajar a uno nuevo: boton "+ Nuevo colono".
 
 La colonia solo LEE las sesiones de Claude Code (carpeta .claude\projects). No cambia nada
 y solo se ve desde esta computadora.
