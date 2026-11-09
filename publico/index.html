@@ -1,0 +1,637 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Colonia de Agentes</title>
+<style>
+/* Vista de colonia vista desde arriba: mapa en canvas, interfaz en paneles grises translúcidos al estilo de un simulador de colonias. */
+:root {
+  --panel: rgba(26, 26, 26, .9);
+  --panel-solid: #1c1c1c;
+  --borde: #4d4d4d;
+  --texto: #dcdcdc;
+  --tenue: #9a9a9a;
+  --resalte: #f2e3a0;
+  --boton: #3b3b3b;
+  --boton-hover: #4b4b4b;
+  --alerta: #b8902a;
+  --alerta-fuerte: #b2552e;
+  --bien: #6fa04a;
+  --medio: #c9a33c;
+  --mal: #b85a3a;
+  --sueno: #6a7a9a;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+html, body { margin: 0; height: 100%; overflow: hidden; background: #2a261d; color: var(--texto); font: 13px/1.35 "Segoe UI", Arial, sans-serif; }
+canvas#mapa { position: fixed; inset: 0; width: 100%; height: 100%; cursor: grab; display: block; }
+canvas#mapa.arrastrando { cursor: grabbing; }
+
+#barra-colonos { position: fixed; top: 8px; left: 50%; transform: translateX(-50%); display: flex; gap: 6px; max-width: calc(100% - 260px); overflow-x: auto; padding: 2px; }
+.retrato { width: 62px; flex: 0 0 auto; background: rgba(20,20,20,.55); border: 1px solid #555; cursor: pointer; padding: 3px 3px 4px; text-align: center; }
+.retrato:hover { border-color: #888; }
+.retrato.sel { border-color: var(--resalte); box-shadow: 0 0 0 1px var(--resalte); }
+.retrato canvas { width: 54px; height: 44px; display: block; }
+.retrato .n { font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.retrato .animo { height: 4px; background: #333; margin-top: 2px; }
+.retrato .animo i { display: block; height: 100%; }
+
+#reloj { position: fixed; top: 8px; right: 8px; background: var(--panel); border: 1px solid var(--borde); padding: 6px 10px; min-width: 170px; text-align: right; }
+#reloj b { font-size: 15px; font-variant-numeric: tabular-nums; font-weight: 600; }
+#reloj .s { color: var(--tenue); font-size: 12px; }
+
+#alertas { position: fixed; right: 8px; top: 70px; display: grid; gap: 4px; justify-items: end; max-width: 300px; }
+.alerta { background: var(--alerta); color: #1b1404; font-weight: 600; padding: 5px 10px; cursor: pointer; border: 1px solid rgba(0,0,0,.4); text-align: right; }
+.alerta.fuerte { background: var(--alerta-fuerte); color: #fff3ea; }
+.alerta:hover { filter: brightness(1.12); }
+
+#inspector { position: fixed; left: 8px; bottom: 44px; width: 380px; max-width: calc(100% - 16px); background: var(--panel); border: 1px solid var(--borde); padding: 10px 12px 12px; display: grid; gap: 6px; }
+#inspector h2 { margin: 0; font-size: 16px; font-weight: 600; display: flex; justify-content: space-between; gap: 8px; }
+#inspector h2 button { all: unset; cursor: pointer; color: var(--tenue); padding: 0 4px; }
+#inspector .fila { display: grid; grid-template-columns: 82px 1fr; gap: 8px; }
+#inspector .fila span:first-child { color: var(--tenue); }
+#inspector .dijo { color: #c8c8c8; font-style: italic; border-left: 2px solid #555; padding-left: 8px; max-height: 5.4em; overflow: auto; }
+#inspector ul { margin: 0; padding: 0; list-style: none; max-height: 120px; overflow: auto; font-size: 12px; }
+#inspector li { display: grid; grid-template-columns: 44px 1fr; gap: 6px; padding: 2px 0; border-top: 1px solid #2c2c2c; }
+#inspector li span:first-child { color: var(--tenue); font-variant-numeric: tabular-nums; }
+.etq { display: inline-block; padding: 0 6px; font-size: 12px; border: 1px solid #555; }
+
+#pestanas { position: fixed; left: 0; right: 0; bottom: 0; height: 36px; background: #262626; border-top: 1px solid #4a4a4a; display: flex; gap: 2px; padding: 3px 4px; }
+#pestanas button { font: inherit; color: var(--texto); background: var(--boton); border: 1px solid #555; padding: 0 18px; cursor: pointer; }
+#pestanas button:hover { background: var(--boton-hover); }
+#pestanas button[aria-pressed="true"] { background: #5a5442; border-color: #8a7f5a; }
+#pestanas .der { margin-left: auto; color: var(--tenue); align-self: center; padding-right: 8px; font-size: 12px; }
+
+#ventana { position: fixed; left: 8px; right: 8px; bottom: 44px; max-height: 46vh; overflow: auto; background: var(--panel-solid); border: 1px solid var(--borde); padding: 10px 12px; }
+#ventana h3 { margin: 0 0 8px; font-size: 15px; font-weight: 600; }
+table { border-collapse: collapse; width: 100%; font-size: 13px; }
+th { text-align: left; color: var(--tenue); font-weight: 400; border-bottom: 1px solid #444; padding: 4px 8px; }
+td { padding: 5px 8px; border-bottom: 1px solid #2b2b2b; vertical-align: top; }
+tr.clic { cursor: pointer; }
+tr.clic:hover td { background: #2a2a2a; }
+td.num { font-variant-numeric: tabular-nums; color: var(--tenue); white-space: nowrap; }
+
+#aviso { position: fixed; left: 50%; top: 50%; transform: translate(-50%,-50%); background: var(--panel); border: 1px solid var(--borde); padding: 16px 20px; max-width: 440px; text-align: center; font-size: 14px; }
+button:focus-visible, .retrato:focus-visible, .alerta:focus-visible { outline: 2px solid var(--resalte); outline-offset: 1px; }
+@media (max-width: 700px) { #barra-colonos { max-width: calc(100% - 16px); top: 60px; left: 8px; transform: none; } #alertas { top: 130px; } }
+</style>
+</head>
+<body>
+<canvas id="mapa" aria-label="Mapa de la colonia"></canvas>
+<div id="barra-colonos" role="list"></div>
+<div id="reloj"><b id="hora">--:--</b><div class="s" id="resumen">Buscando colonos…</div></div>
+<div id="alertas"></div>
+<section id="inspector" hidden></section>
+<section id="ventana" hidden></section>
+<div id="aviso" hidden></div>
+<nav id="pestanas">
+  <button id="tab-trabajo" aria-pressed="false">Trabajo</button>
+  <button id="tab-registro" aria-pressed="false">Registro</button>
+  <button id="tab-ayuda" aria-pressed="false">Ayuda</button>
+  <span class="der" id="estado-con">Conectando…</span>
+</nav>
+
+<script>
+"use strict";
+const T = 32;            // tamaño de una casilla
+const SALA_W = 12, SALA_H = 9, PASILLO = 4;
+const cv = document.getElementById("mapa");
+const ctx = cv.getContext("2d");
+const reduce = matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+let colonos = [];        // datos del servidor
+const pawns = new Map(); // id -> estado visual {x,y,tx,ty}
+let salas = [];          // [{nombre, x, y}] en casillas
+let firmaSalas = "";
+let ocultas = 0;
+let suelo = null;        // canvas pre-dibujado
+let mundoW = 0, mundoH = 0;
+let cam = { x: 0, y: 0, z: 1, auto: true };
+let seleccionado = null;
+let ventana = null;
+let conectado = false;
+
+const COLOR_ACT = { construir: "bien", investigar: "bien", operar: "bien", explorar: "bien", delegar: "bien", planificar: "bien", pensar: "bien", esperar: "medio", permiso: "mal", dormir: "sueno" };
+const ANIMO = { bien: [0.85, "var(--bien)"], medio: [0.5, "var(--medio)"], mal: [0.3, "var(--mal)"], sueno: [0.65, "var(--sueno)"] };
+
+/* ---------- utilidades ---------- */
+function rnd(seed) { let s = seed >>> 0; return () => { s = (s * 1664525 + 1013904223) >>> 0; return s / 4294967296; }; }
+function hashStr(s) { let h = 2166136261; for (const c of s) { h ^= c.charCodeAt(0); h = Math.imul(h, 16777619); } return h >>> 0; }
+function hace(seg) {
+  if (seg < 10) return "ahora";
+  if (seg < 60) return "hace " + seg + " s";
+  if (seg < 3600) return "hace " + Math.round(seg / 60) + " min";
+  if (seg < 86400) return "hace " + Math.round(seg / 3600) + " h";
+  return "hace " + Math.round(seg / 86400) + " d";
+}
+function esc(s) { const d = document.createElement("div"); d.textContent = s == null ? "" : String(s); return d.innerHTML; }
+
+/* ---------- mapa ---------- */
+// Muebles dentro de una sala (coordenadas en casillas, relativas al interior)
+const MUEBLES = {
+  estante: { x: 1, y: 0, w: 2, h: 1, spot: [2, 1.6] },
+  pizarra: { x: 4, y: 0, w: 2, h: 1, spot: [5, 1.6] },
+  antena:  { x: 8, y: 0, w: 1, h: 1, spot: [8.5, 1.6] },
+  mesa:    { x: 1, y: 2.6, w: 2, h: 1, spot: [2, 4.1] },
+  consola: { x: 5, y: 2.6, w: 1, h: 1, spot: [5.5, 4.1] },
+  radio:   { x: 8, y: 2.6, w: 1, h: 1, spot: [8.5, 4.1] },
+  cama:    { x: 0.2, y: 4.8, w: 1, h: 2, spot: [0.7, 5.6], copias: 3, paso: 1.25 },
+  silla:   { x: 5.5, y: 5.2, w: 2, h: 1.2, spot: [6.5, 6.3] }
+};
+
+function construirMapa(nombres, roles) {
+  const n = Math.max(1, nombres.length);
+  const cols = Math.min(n, Math.max(1, Math.ceil(Math.sqrt(n * 1.6))));
+  const filas = Math.ceil(n / cols);
+  salas = nombres.map((nombre, i) => ({
+    nombre,
+    rol: (roles && roles[nombre]) || "",
+    x: PASILLO + (i % cols) * (SALA_W + PASILLO),
+    y: PASILLO + 1 + Math.floor(i / cols) * (SALA_H + PASILLO)
+  }));
+  const tw = PASILLO + cols * (SALA_W + PASILLO);
+  const th = PASILLO + 1 + filas * (SALA_H + PASILLO);
+  mundoW = tw * T; mundoH = th * T;
+  suelo = document.createElement("canvas");
+  suelo.width = mundoW; suelo.height = mundoH;
+  const g = suelo.getContext("2d");
+  pintarTerreno(g, tw, th);
+  for (const s of salas) pintarSala(g, s);
+  cam.auto = true;
+}
+
+function pintarTerreno(g, tw, th) {
+  const r = rnd(7);
+  g.fillStyle = "#6e5c3f"; g.fillRect(0, 0, mundoW, mundoH);
+  for (let i = 0; i < tw * th * 0.9; i++) {
+    const x = r() * mundoW, y = r() * mundoH, rad = 10 + r() * 34;
+    g.fillStyle = r() < 0.5 ? "rgba(90,74,48,.35)" : "rgba(128,108,74,.28)";
+    g.beginPath(); g.ellipse(x, y, rad, rad * (0.5 + r() * 0.5), r() * 3, 0, Math.PI * 2); g.fill();
+  }
+  for (let i = 0; i < tw * th * 0.5; i++) {
+    const x = r() * mundoW, y = r() * mundoH, rad = 14 + r() * 40;
+    g.fillStyle = "rgba(96,112,52," + (0.25 + r() * 0.3) + ")";
+    g.beginPath(); g.ellipse(x, y, rad, rad * 0.7, r() * 3, 0, Math.PI * 2); g.fill();
+  }
+  for (let i = 0; i < tw * th * 1.6; i++) { // matas de pasto
+    const x = r() * mundoW, y = r() * mundoH;
+    g.strokeStyle = r() < 0.5 ? "#6d7d3a" : "#56662c"; g.lineWidth = 1.4;
+    for (let k = 0; k < 3; k++) { g.beginPath(); g.moveTo(x + k * 2, y); g.lineTo(x + k * 2 + (r() * 4 - 2), y - 4 - r() * 4); g.stroke(); }
+  }
+  for (let i = 0; i < tw * th * 0.05; i++) { // piedras
+    const x = r() * mundoW, y = r() * mundoH, rad = 3 + r() * 5;
+    g.fillStyle = "#8d877b"; g.strokeStyle = "#3f3b34"; g.lineWidth = 1.5;
+    g.beginPath(); g.ellipse(x, y, rad * 1.3, rad, r() * 3, 0, Math.PI * 2); g.fill(); g.stroke();
+  }
+  // árboles, lejos de las salas
+  const arboles = [];
+  for (let i = 0; i < tw * th * 0.06; i++) {
+    const x = r() * mundoW, y = r() * mundoH;
+    const dentro = salas.some((s) => x > (s.x - 1) * T && x < (s.x + SALA_W + 1) * T && y > (s.y - 1) * T && y < (s.y + SALA_H + 1) * T);
+    if (!dentro) arboles.push([x, y, 12 + r() * 10, r()]);
+  }
+  arboles.sort((a, b) => a[1] - b[1]);
+  for (const [x, y, rad, k] of arboles) arbol(g, x, y, rad, k);
+}
+
+function arbol(g, x, y, rad, k) {
+  g.fillStyle = "rgba(0,0,0,.22)"; g.beginPath(); g.ellipse(x + 4, y + rad * 0.9, rad * 0.9, rad * 0.35, 0, 0, Math.PI * 2); g.fill();
+  g.fillStyle = "#5a3d24"; g.strokeStyle = "#2b1d11"; g.lineWidth = 2;
+  g.fillRect(x - 3, y, 6, rad * 0.9); g.strokeRect(x - 3, y, 6, rad * 0.9);
+  const verdes = ["#3f5a2a", "#4b6a30", "#36502a"];
+  g.fillStyle = verdes[Math.floor(k * 3)]; g.strokeStyle = "#1d2a13"; g.lineWidth = 2.5;
+  g.beginPath();
+  for (let a = 0; a < 7; a++) { const ang = a / 7 * Math.PI * 2; g.ellipse(x + Math.cos(ang) * rad * 0.45, y - rad * 0.5 + Math.sin(ang) * rad * 0.35, rad * 0.55, rad * 0.5, 0, 0, Math.PI * 2); }
+  g.fill(); g.stroke();
+  g.fillStyle = "rgba(255,255,255,.08)"; g.beginPath(); g.ellipse(x - rad * 0.25, y - rad * 0.8, rad * 0.35, rad * 0.25, 0, 0, Math.PI * 2); g.fill();
+}
+
+function pintarSala(g, s) {
+  const x0 = s.x * T, y0 = s.y * T, w = SALA_W * T, h = SALA_H * T;
+  // piso de madera
+  g.fillStyle = "#8b6b46"; g.fillRect(x0, y0, w, h);
+  const r = rnd(hashStr(s.nombre));
+  for (let yy = 0; yy < SALA_H; yy++) {
+    let off = Math.floor(r() * 3) * T;
+    g.strokeStyle = "#6f5333"; g.lineWidth = 1.5;
+    g.beginPath(); g.moveTo(x0, y0 + yy * T); g.lineTo(x0 + w, y0 + yy * T); g.stroke();
+    for (let xx = off; xx < w; xx += 3 * T) { g.beginPath(); g.moveTo(x0 + xx, y0 + yy * T); g.lineTo(x0 + xx, y0 + (yy + 1) * T); g.stroke(); }
+    g.fillStyle = "rgba(255,230,190,.05)"; g.fillRect(x0, y0 + yy * T + 2, w, 4);
+  }
+  // muros
+  const muro = (x, y, ww, hh) => { g.fillStyle = "#4b4844"; g.fillRect(x, y, ww, hh); g.fillStyle = "#6b6762"; g.fillRect(x, y, ww, Math.min(5, hh)); g.strokeStyle = "#252321"; g.lineWidth = 2; g.strokeRect(x + 1, y + 1, ww - 2, hh - 2); };
+  const t = T * 0.6;
+  muro(x0 - t, y0 - t, w + 2 * t, t);
+  muro(x0 - t, y0, t, h);
+  muro(x0 + w, y0, t, h);
+  const puerta = Math.floor(SALA_W / 2) * T;
+  muro(x0 - t, y0 + h, puerta + t - T * 0.5, t);
+  muro(x0 + puerta + T * 1.5, y0 + h, w - puerta - T * 1.5 + t, t);
+  g.fillStyle = "#6a4c2e"; g.fillRect(x0 + puerta - T * 0.5, y0 + h, T * 2, t); g.strokeStyle = "#2b1d11"; g.strokeRect(x0 + puerta - T * 0.5 + 1, y0 + h + 1, T * 2 - 2, t - 2);
+  // muebles
+  const ix = x0 + T * 0.5, iy = y0 + T * 0.6;
+  for (const [nombre, m] of Object.entries(MUEBLES)) for (let k = 0; k < (m.copias || 1); k++) dibujarMueble(g, nombre, ix + (m.x + k * (m.paso || 0)) * T, iy + m.y * T, m.w * T, m.h * T);
+  // letrero de la sala: nombre y función
+  g.font = "600 13px Segoe UI, Arial, sans-serif";
+  const etiqueta = s.nombre.length > 30 ? s.nombre.slice(0, 29) + "…" : s.nombre;
+  const rol = s.rol ? (s.rol.length > 44 ? s.rol.slice(0, 43) + "…" : s.rol) : "";
+  g.font = "12px Segoe UI, Arial, sans-serif";
+  const tw2 = rol ? g.measureText(rol).width : 0;
+  g.font = "600 13px Segoe UI, Arial, sans-serif";
+  const tw = Math.max(g.measureText(etiqueta).width, tw2) + 14;
+  const alto = rol ? 36 : 20;
+  g.fillStyle = "rgba(20,20,20,.8)"; g.fillRect(x0 - t, y0 - t - alto - 2, tw, alto);
+  g.fillStyle = "#f2e3a0"; g.fillText(etiqueta, x0 - t + 7, y0 - t - alto + 13);
+  if (rol) { g.font = "12px Segoe UI, Arial, sans-serif"; g.fillStyle = "#c9c2a6"; g.fillText(rol, x0 - t + 7, y0 - t - 8); }
+}
+
+function caja(g, x, y, w, h, fill, borde) { g.fillStyle = fill; g.fillRect(x, y, w, h); g.strokeStyle = borde || "#241a10"; g.lineWidth = 2; g.strokeRect(x + 1, y + 1, w - 2, h - 2); }
+function dibujarMueble(g, n, x, y, w, h) {
+  g.fillStyle = "rgba(0,0,0,.18)"; g.fillRect(x + 3, y + 4, w, h);
+  if (n === "estante") {
+    caja(g, x, y, w, h, "#6b4a2b");
+    const libros = ["#8e3b33", "#3b5f8e", "#9a8a3c", "#4f7a4a", "#6d4a7a", "#a0603c"];
+    for (let i = 0; i < 9; i++) { g.fillStyle = libros[i % libros.length]; g.fillRect(x + 5 + i * (w - 10) / 9, y + 5, (w - 10) / 9 - 1, h - 10); }
+  } else if (n === "pizarra") {
+    caja(g, x, y + 4, w, h - 8, "#2f4a3a", "#1a120a");
+    g.strokeStyle = "rgba(230,230,220,.7)"; g.lineWidth = 1.5;
+    for (let i = 0; i < 3; i++) { g.beginPath(); g.moveTo(x + 8, y + 11 + i * 5); g.lineTo(x + 8 + 18 + i * 9, y + 11 + i * 5); g.stroke(); }
+  } else if (n === "antena") {
+    caja(g, x + 6, y + 6, w - 12, h - 12, "#7d7f82", "#2a2c2e");
+    g.fillStyle = "#b9bcc0"; g.strokeStyle = "#2a2c2e"; g.lineWidth = 2;
+    g.beginPath(); g.arc(x + w / 2, y + h / 2, w * 0.42, 0, Math.PI * 2); g.fill(); g.stroke();
+    g.fillStyle = "#555"; g.beginPath(); g.arc(x + w / 2, y + h / 2, 3, 0, Math.PI * 2); g.fill();
+  } else if (n === "mesa") {
+    caja(g, x, y, w, h, "#8a6038");
+    g.fillStyle = "#9c9c9c"; g.fillRect(x + 8, y + 9, 14, 4); g.fillStyle = "#5a3a20"; g.fillRect(x + 22, y + 8, 6, 6);
+    g.fillStyle = "#d8cfb8"; g.fillRect(x + w - 26, y + 7, 16, 18);
+  } else if (n === "consola") {
+    caja(g, x, y, w, h, "#55595e", "#1c1e20");
+    g.fillStyle = "#1f3a2a"; g.fillRect(x + 5, y + 5, w - 10, h - 14);
+    g.fillStyle = "#6fd08a"; g.fillRect(x + 8, y + 9, w - 18, 2); g.fillRect(x + 8, y + 14, w - 22, 2);
+  } else if (n === "radio") {
+    caja(g, x, y, w, h, "#6a6650", "#1e1c14");
+    g.fillStyle = "#2a2a22"; g.beginPath(); g.arc(x + w / 2, y + h / 2 + 2, 7, 0, Math.PI * 2); g.fill();
+    g.strokeStyle = "#cfcfcf"; g.lineWidth = 2; g.beginPath(); g.moveTo(x + w - 7, y + 6); g.lineTo(x + w - 2, y - 6); g.stroke();
+  } else if (n === "cama") {
+    caja(g, x, y, w, h, "#6b4a2b");
+    g.fillStyle = "#7b8db0"; g.fillRect(x + 3, y + h * 0.3, w - 6, h * 0.66);
+    g.fillStyle = "#e8e2d2"; g.fillRect(x + 5, y + 4, w - 10, h * 0.2);
+  } else if (n === "silla") {
+    g.fillStyle = "#8a6038"; g.strokeStyle = "#241a10"; g.lineWidth = 2;
+    g.beginPath(); g.ellipse(x + w / 2, y + h / 2 - 4, w * 0.36, h * 0.36, 0, 0, Math.PI * 2); g.fill(); g.stroke();
+    for (const dx of [-0.45, 0.45]) caja(g, x + w / 2 + dx * w - 8, y + h - 14, 16, 14, "#6b4a2b");
+  }
+}
+
+/* ---------- colonos ---------- */
+const PIEL = ["#e6b996", "#c98f6a", "#a96f4a", "#f0c8a8"];
+const PELO = ["#2a1c14", "#5a3a1e", "#14110f", "#7a5a2a"];
+function dibujarColono(g, c, x, y, esc_, opts) {
+  const h = hashStr(c.id);
+  const piel = PIEL[h % PIEL.length], pelo = PELO[c.pelo % PELO.length];
+  g.save(); g.translate(x, y); g.scale(esc_, esc_);
+  if (opts && opts.acostado) g.rotate(-Math.PI / 2);
+  // sombra
+  if (!(opts && opts.acostado)) { g.fillStyle = "rgba(0,0,0,.25)"; g.beginPath(); g.ellipse(0, 13, 11, 4, 0, 0, Math.PI * 2); g.fill(); }
+  // cuerpo
+  g.fillStyle = c.ropa; g.strokeStyle = "#141414"; g.lineWidth = 2;
+  g.beginPath(); g.ellipse(0, 3, 10.5, 11, 0, 0, Math.PI * 2); g.fill(); g.stroke();
+  g.fillStyle = "rgba(255,255,255,.12)"; g.beginPath(); g.ellipse(-3, -1, 4, 5, 0, 0, Math.PI * 2); g.fill();
+  // cabeza
+  g.fillStyle = piel; g.beginPath(); g.ellipse(0, -11, 8.5, 8, 0, 0, Math.PI * 2); g.fill(); g.stroke();
+  // pelo
+  g.fillStyle = pelo; g.beginPath();
+  const tipo = c.pelo % 4;
+  if (tipo === 0) { g.ellipse(0, -15, 8.2, 4.6, 0, Math.PI, 0); }
+  else if (tipo === 1) { g.ellipse(0, -14, 8.6, 5.5, 0, Math.PI * 0.95, Math.PI * 0.05); }
+  else if (tipo === 2) { g.ellipse(0, -15.5, 7, 3.6, 0, Math.PI, 0); g.ellipse(0, -13, 9, 4, 0, Math.PI * 1.05, Math.PI * 1.25); }
+  else { g.ellipse(0, -14, 9, 6, 0, Math.PI * 0.9, Math.PI * 0.1); g.rect(-9, -14, 3, 8); g.rect(6, -14, 3, 8); }
+  g.fill();
+  // ojos
+  if (!(opts && opts.acostado)) { g.fillStyle = "#1a1a1a"; g.fillRect(-3.5, -11, 2, 2); g.fillRect(1.5, -11, 2, 2); }
+  else { g.strokeStyle = "#1a1a1a"; g.lineWidth = 1; g.beginPath(); g.moveTo(-4, -10); g.lineTo(-1.5, -10); g.moveTo(1.5, -10); g.lineTo(4, -10); g.stroke(); }
+  g.restore();
+}
+
+function icono(g, act, x, y, t) {
+  g.save(); g.translate(x, y);
+  g.fillStyle = "rgba(20,20,20,.82)"; g.strokeStyle = "#777"; g.lineWidth = 1;
+  g.beginPath(); g.roundRect ? g.roundRect(-11, -11, 22, 22, 4) : g.rect(-11, -11, 22, 22); g.fill(); g.stroke();
+  g.strokeStyle = "#e8e8e8"; g.fillStyle = "#e8e8e8"; g.lineWidth = 2;
+  const bob = reduce ? 0 : Math.sin(t / 180) * 1.2;
+  switch (act) {
+    case "construir": g.save(); g.rotate(-0.6 + (reduce ? 0 : Math.sin(t / 120) * 0.35)); g.fillRect(-1, -2, 2, 9); g.fillRect(-5, -6, 10, 4); g.restore(); break;
+    case "investigar": g.fillStyle = "#c9b27a"; g.fillRect(-7, -5, 6, 10); g.fillRect(1, -5, 6, 10); g.strokeStyle = "#5a4a2a"; g.beginPath(); g.moveTo(0, -5); g.lineTo(0, 5); g.stroke(); break;
+    case "operar": g.strokeRect(-7, -6, 14, 10); g.fillStyle = "#6fd08a"; g.fillRect(-5, -4, 4 + (reduce ? 4 : (t / 150 % 6)), 2); g.fillRect(-2, 5, 4, 2); break;
+    case "explorar": g.beginPath(); g.arc(-3, 3, 7, -Math.PI / 2, 0); g.stroke(); g.beginPath(); g.arc(-3, 3, 3, -Math.PI / 2, 0); g.stroke(); g.fillRect(-4, 2, 3, 3); break;
+    case "delegar": g.beginPath(); g.ellipse(-2, -1 + bob, 7, 5, 0, 0, Math.PI * 2); g.stroke(); g.beginPath(); g.moveTo(-4, 4); g.lineTo(-6, 8); g.lineTo(0, 4); g.stroke(); break;
+    case "planificar": g.strokeRect(-6, -7, 12, 14); g.beginPath(); g.moveTo(-3, -2); g.lineTo(3, -2); g.moveTo(-3, 2); g.lineTo(3, 2); g.stroke(); break;
+    case "pensar": for (let i = 0; i < 3; i++) { g.globalAlpha = reduce ? 1 : 0.35 + 0.65 * ((Math.floor(t / 300) % 3) === i ? 1 : 0); g.beginPath(); g.arc(-6 + i * 6, 0, 2, 0, Math.PI * 2); g.fill(); } g.globalAlpha = 1; break;
+    case "esperar": g.fillStyle = "#e3c25a"; g.font = "bold 15px Arial"; g.textAlign = "center"; g.textBaseline = "middle"; g.fillText("?", 0, 1 + bob); break;
+    case "permiso": g.fillStyle = "#ff8a5a"; g.font = "bold 16px Arial"; g.textAlign = "center"; g.textBaseline = "middle"; g.fillText("!", 0, 1 + bob); break;
+    case "dormir": g.fillStyle = "#a9b8dd"; g.font = "bold 12px Arial"; g.textAlign = "center"; g.textBaseline = "middle"; g.fillText("z", -2, 2 + bob); g.font = "bold 9px Arial"; g.fillText("z", 4, -4 + bob); break;
+  }
+  g.restore();
+}
+
+/* ---------- posiciones ---------- */
+function destino(c, indice) {
+  const s = salas.find((z) => z.nombre === c.sala) || salas[0];
+  if (!s) return [0, 0];
+  const m = MUEBLES[c.mueble] || MUEBLES.silla;
+  let [sx, sy] = m.spot;
+  const ix = s.x * T + T * 0.5, iy = s.y * T + T * 0.6;
+  if (c.mueble === "cama") return [ix + (m.x + (indice % m.copias) * m.paso) * T + m.w * T / 2, iy + m.y * T + T * 0.8 + Math.floor(indice / m.copias) * 10];
+  const off = Math.ceil(indice / 2) * 34 * (indice % 2 ? -1 : 1);
+  return [ix + sx * T + off, iy + sy * T];
+}
+
+function actualizarDestinos() {
+  const porSpot = new Map();
+  for (const c of colonos) {
+    const clave = c.sala + "|" + c.mueble;
+    const i = porSpot.get(clave) || 0; porSpot.set(clave, i + 1);
+    const [tx, ty] = destino(c, i);
+    let p = pawns.get(c.id);
+    if (!p) {
+      const s = salas.find((z) => z.nombre === c.sala) || salas[0];
+      const px = s ? (s.x + SALA_W / 2) * T + T / 2 : tx, py = s ? (s.y + SALA_H) * T + T : ty;
+      p = { x: px, y: py, tx, ty, fase: Math.random() * 6 };
+      pawns.set(c.id, p);
+    }
+    p.tx = tx; p.ty = ty; p.c = c;
+  }
+  for (const id of [...pawns.keys()]) if (!colonos.some((c) => c.id === id)) pawns.delete(id);
+}
+
+/* ---------- cámara y dibujo ---------- */
+let dpr = 1;
+function ajustarCanvas() {
+  dpr = window.devicePixelRatio || 1;
+  cv.width = Math.round(innerWidth * dpr); cv.height = Math.round(innerHeight * dpr);
+}
+// espacio que ocupan la barra de colonos (arriba) y las pestañas (abajo)
+const UI_ARRIBA = 100, UI_ABAJO = 44;
+const OFFY = (UI_ARRIBA - UI_ABAJO) / 2;
+function encuadrar() {
+  if (!mundoW) return;
+  const z = Math.min((innerWidth - 40) / mundoW, (innerHeight - UI_ARRIBA - UI_ABAJO - 16) / mundoH, 1.6);
+  cam.z = Math.max(0.3, z);
+  cam.x = mundoW / 2; cam.y = mundoH / 2;
+}
+function aPantalla(x, y) { return [(x - cam.x) * cam.z + innerWidth / 2, (y - cam.y) * cam.z + innerHeight / 2 + OFFY]; }
+function aMundo(x, y) { return [(x - innerWidth / 2) / cam.z + cam.x, (y - innerHeight / 2 - OFFY) / cam.z + cam.y]; }
+
+let ultimoT = performance.now();
+function cuadro(t) {
+  const dt = Math.min(0.05, (t - ultimoT) / 1000); ultimoT = t;
+  if (cam.auto) encuadrar();
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.fillStyle = "#2a261d"; ctx.fillRect(0, 0, innerWidth, innerHeight);
+  ctx.save();
+  ctx.translate(innerWidth / 2, innerHeight / 2 + OFFY); ctx.scale(cam.z, cam.z); ctx.translate(-cam.x, -cam.y);
+  if (suelo) ctx.drawImage(suelo, 0, 0);
+  // mover
+  const vel = 70;
+  for (const p of pawns.values()) {
+    if (reduce) { p.x = p.tx; p.y = p.ty; continue; }
+    const dx = p.tx - p.x, dy = p.ty - p.y;
+    // primero en vertical hasta la fila, luego horizontal: se ve como caminar por casillas
+    if (Math.abs(dx) > 1 && Math.abs(dy) > 1 && Math.abs(dy) > T * 0.4) p.y += Math.sign(dy) * Math.min(Math.abs(dy), vel * dt);
+    else if (Math.abs(dx) > 1) p.x += Math.sign(dx) * Math.min(Math.abs(dx), vel * dt);
+    else if (Math.abs(dy) > 1) p.y += Math.sign(dy) * Math.min(Math.abs(dy), vel * dt);
+    p.caminando = Math.abs(dx) > 1 || Math.abs(dy) > 1;
+  }
+  const lista = [...pawns.values()].sort((a, b) => a.y - b.y);
+  for (const p of lista) {
+    const c = p.c; if (!c) continue;
+    const dormido = c.actividad === "dormir" && !p.caminando;
+    const bob = p.caminando && !reduce ? Math.abs(Math.sin(t / 110 + p.fase)) * -2.5 : 0;
+    const escala = c.padre ? 0.8 : 1;
+    dibujarColono(ctx, c, p.x, p.y + bob, escala, { acostado: dormido });
+    if (seleccionado === c.id) {
+      ctx.strokeStyle = "#f2e3a0"; ctx.lineWidth = 2 / cam.z;
+      const r = 17;
+      for (const [sx, sy] of [[-1, -1], [1, -1], [-1, 1], [1, 1]]) {
+        const bx = p.x + sx * r, by = p.y - 4 + sy * (r + 4);
+        ctx.beginPath(); ctx.moveTo(bx, by - sy * -6 * -1 + sy * -6); ctx.lineTo(bx, by); ctx.lineTo(bx - sx * 6, by); ctx.stroke();
+      }
+    }
+    if (!p.caminando) icono(ctx, c.actividad, p.x + 16, p.y - 28, t + p.fase * 1000);
+    // nombre
+    ctx.font = "600 11px Segoe UI, Arial, sans-serif"; ctx.textAlign = "center"; ctx.textBaseline = "top";
+    const w = ctx.measureText(c.nombre).width + 8;
+    ctx.fillStyle = "rgba(0,0,0,.55)"; ctx.fillRect(p.x - w / 2, p.y + 16, w, 15);
+    ctx.fillStyle = c.actividad === "permiso" ? "#ffb08a" : c.actividad === "esperar" ? "#f2d77a" : "#f0f0f0";
+    ctx.fillText(c.nombre, p.x, p.y + 17);
+  }
+  ctx.restore();
+  requestAnimationFrame(cuadro);
+}
+
+/* ---------- interfaz ---------- */
+function retratoCanvas(c) {
+  const k = document.createElement("canvas"); k.width = 108; k.height = 88;
+  const g = k.getContext("2d"); g.fillStyle = "#3a3630"; g.fillRect(0, 0, 108, 88);
+  dibujarColono(g, c, 54, 62, 2.4); return k;
+}
+const retratos = new Map();
+function pintarBarra() {
+  const barra = document.getElementById("barra-colonos");
+  const ids = colonos.filter((c) => !c.padre).map((c) => c.id);
+  const actuales = [...barra.children].map((n) => n.dataset.id);
+  if (ids.join() !== actuales.join()) {
+    barra.innerHTML = "";
+    for (const id of ids) {
+      const c = colonos.find((x) => x.id === id);
+      const d = document.createElement("div");
+      d.className = "retrato"; d.dataset.id = id; d.tabIndex = 0; d.setAttribute("role", "listitem");
+      if (!retratos.has(id)) retratos.set(id, retratoCanvas(c));
+      d.appendChild(retratos.get(id));
+      d.insertAdjacentHTML("beforeend", '<div class="n"></div><div class="animo"><i></i></div>');
+      d.addEventListener("click", () => seleccionar(id, true));
+      d.addEventListener("keydown", (e) => { if (e.key === "Enter") seleccionar(id, true); });
+      barra.appendChild(d);
+    }
+  }
+  for (const d of barra.children) {
+    const c = colonos.find((x) => x.id === d.dataset.id); if (!c) continue;
+    d.querySelector(".n").textContent = c.nombre;
+    const [v, col] = ANIMO[COLOR_ACT[c.actividad]];
+    const i = d.querySelector(".animo i"); i.style.width = v * 100 + "%"; i.style.background = col;
+    d.title = c.nombre + " · " + c.verbo + " · " + c.sala;
+    d.classList.toggle("sel", seleccionado === c.id);
+  }
+}
+
+function pintarAlertas() {
+  const el = document.getElementById("alertas");
+  const items = [];
+  for (const c of colonos) {
+    if (c.padre) continue;
+    if (c.actividad === "permiso") items.push(['<div class="alerta fuerte" tabindex="0" data-id="' + c.id + '">¿' + esc(c.nombre) + " te necesita? Revisa su terminal (" + esc(c.sala) + ")</div>"]);
+    else if (c.actividad === "esperar" && c.edadSeg < 3 * 3600) items.push(['<div class="alerta" tabindex="0" data-id="' + c.id + '">' + esc(c.nombre) + " terminó y espera órdenes</div>"]);
+  }
+  el.innerHTML = items.join("");
+  for (const a of el.children) a.addEventListener("click", () => seleccionar(a.dataset.id, true));
+}
+
+function pintarInspector() {
+  const el = document.getElementById("inspector");
+  const c = colonos.find((x) => x.id === seleccionado);
+  if (!c || ventana) { el.hidden = true; return; }
+  el.hidden = false;
+  const acciones = (c.acciones || []).slice().reverse().slice(0, 8).map((a) =>
+    "<li><span>" + new Date(a.t).toLocaleTimeString("es-PE", { hour: "2-digit", minute: "2-digit", hour12: false }) + "</span><span>" + esc(verboDe(a.tipo)) + (a.detalle ? ": " + esc(a.detalle) : "") + "</span></li>").join("");
+  el.innerHTML =
+    "<h2><span>" + esc(c.nombre) + (c.padre ? ' <span class="etq">ayudante</span>' : "") + '</span><button aria-label="Cerrar">✕</button></h2>' +
+    '<div class="fila"><span>Sala</span><span>' + esc(c.sala) + "</span></div>" +
+    '<div class="fila"><span>Función</span><span>' + (c.rol ? esc(c.rol) : '<span style="color:var(--tenue)">Sin función. Ver Ayuda → “Dar funciones”.</span>') + "</span></div>" +
+    '<div class="fila"><span>Encargo</span><span>' + esc(c.titulo) + "</span></div>" +
+    '<div class="fila"><span>Ahora</span><span><b>' + esc(c.verbo) + "</b>" + (c.detalle ? " · " + esc(c.detalle) : "") + "</span></div>" +
+    '<div class="fila"><span>Última vez</span><span>' + hace(c.edadSeg) + "</span></div>" +
+    (c.ultimoTexto ? '<div class="dijo">“' + esc(c.ultimoTexto) + "”</div>" : "") +
+    (acciones ? "<ul>" + acciones + "</ul>" : "") +
+    '<div><button class="ocultar" style="font:inherit;font-size:12px;color:var(--texto);background:var(--boton);border:1px solid #555;padding:4px 10px;cursor:pointer">Ocultar la sala ' + esc(c.sala) + "</button></div>";
+  el.querySelector("h2 button").addEventListener("click", () => { seleccionado = null; pintarTodo(); });
+  el.querySelector("button.ocultar").addEventListener("click", async () => {
+    try { await fetch("/api/ocultar", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ sala: c.cwd }) }); } catch (_) {}
+    seleccionado = null; consultar();
+  });
+}
+
+function verboDe(tipo) {
+  return { construir: "Construyó", investigar: "Leyó", operar: "Usó la consola", explorar: "Exploró", delegar: "Dio órdenes", planificar: "Planificó" }[tipo] || "Hizo";
+}
+
+function pintarVentana() {
+  const el = document.getElementById("ventana");
+  for (const b of document.querySelectorAll("#pestanas button")) b.setAttribute("aria-pressed", String(b.id === "tab-" + ventana));
+  if (!ventana) { el.hidden = true; return; }
+  el.hidden = false;
+  if (ventana === "trabajo") {
+    const filas = colonos.map((c) => '<tr class="clic" data-id="' + c.id + '"><td>' + esc(c.nombre) + "</td><td>" + esc(c.sala) + "</td><td><b>" + esc(c.verbo) + "</b>" + (c.detalle ? " · " + esc(c.detalle) : "") + "</td><td>" + esc(c.titulo) + '</td><td class="num">' + hace(c.edadSeg) + "</td></tr>").join("");
+    el.innerHTML = "<h3>Trabajo</h3>" + (filas ? '<div style="overflow-x:auto"><table><thead><tr><th>Colono</th><th>Sala</th><th>Haciendo</th><th>Encargo</th><th>Actividad</th></tr></thead><tbody>' + filas + "</tbody></table></div>" : "<p>No hay colonos todavía.</p>");
+    for (const tr of el.querySelectorAll("tr.clic")) tr.addEventListener("click", () => { ventana = null; seleccionar(tr.dataset.id, true); });
+  } else if (ventana === "registro") {
+    const ev = [];
+    for (const c of colonos) for (const a of c.acciones || []) ev.push({ c, a });
+    ev.sort((x, y) => y.a.t - x.a.t);
+    const filas = ev.slice(0, 60).map(({ c, a }) => '<tr><td class="num">' + new Date(a.t).toLocaleTimeString("es-PE", { hour: "2-digit", minute: "2-digit", hour12: false }) + "</td><td>" + esc(c.nombre) + "</td><td>" + esc(verboDe(a.tipo)) + (a.detalle ? ": " + esc(a.detalle) : "") + "</td><td>" + esc(c.sala) + "</td></tr>").join("");
+    el.innerHTML = "<h3>Registro</h3>" + (filas ? '<div style="overflow-x:auto"><table><tbody>' + filas + "</tbody></table></div>" : "<p>Todavía no hay actividad.</p>");
+  } else {
+    el.innerHTML = "<h3>Cómo funciona</h3>" +
+      "<p>Cada sesión de Claude Code de esta computadora es un colono. Cada carpeta donde trabajan es una sala. Los colonos caminan al mueble de lo que están haciendo:</p>" +
+      "<table><tbody>" +
+      "<tr><td>Mesa de trabajo</td><td>Construyendo: crea o edita archivos</td></tr>" +
+      "<tr><td>Estante</td><td>Investigando: lee archivos o busca dentro de ellos</td></tr>" +
+      "<tr><td>Consola</td><td>Operando: corre comandos</td></tr>" +
+      "<tr><td>Antena</td><td>Explorando: busca en internet</td></tr>" +
+      "<tr><td>Radio</td><td>Dando órdenes: manda a un ayudante (aparece un colono más pequeño)</td></tr>" +
+      "<tr><td>Pizarra</td><td>Planificando su lista de tareas</td></tr>" +
+      "<tr><td>Silla con <b>?</b></td><td>Terminó y espera tus órdenes</td></tr>" +
+      "<tr><td>Silla con <b>!</b></td><td>Lleva rato quieto a mitad de una tarea: puede estar pidiéndote permiso. Revisa su terminal.</td></tr>" +
+      "<tr><td>Cama</td><td>Sin actividad por más de 20 minutos</td></tr>" +
+      "</tbody></table><p>Arrastra el mapa para moverte, usa la rueda del mouse para acercar y haz doble clic para volver a ver toda la colonia.</p>" +
+      "<h3 style=\"margin-top:14px\">Dar funciones</h3>" +
+      "<p>La función de un agente se escribe en un archivo <b>CLAUDE.md</b> dentro de su carpeta. Claude lo lee cada vez que empieza y la colonia muestra la línea que empieza con <b>Rol:</b> en el letrero de la sala. La forma más fácil: pídeselo al mismo agente en su terminal, por ejemplo: <i>“Crea un CLAUDE.md en esta carpeta. Primera línea: Rol: Productor de videos de salud y terror. Debajo, tus reglas de trabajo.”</i></p>" +
+      "<h3 style=\"margin-top:14px\">Salas ocultas</h3>" +
+      "<p>" + (ocultas ? "Tienes " + ocultas + " sala(s) oculta(s). " : "No tienes salas ocultas. ") + "Para ocultar una, haz clic en un colono y usa el botón de su panel.</p>" +
+      (ocultas ? '<button id="mostrar-todo" style="font:inherit;color:var(--texto);background:var(--boton);border:1px solid #555;padding:4px 10px;cursor:pointer">Volver a mostrar todas</button>' : "");
+    const b = document.getElementById("mostrar-todo");
+    if (b) b.addEventListener("click", async () => { try { await fetch("/api/mostrar-todo", { method: "POST" }); } catch (_) {} consultar(); });
+  }
+}
+
+function pintarReloj() {
+  const ahora = new Date();
+  document.getElementById("hora").textContent = ahora.toLocaleTimeString("es-PE", { hour: "2-digit", minute: "2-digit", hour12: false });
+  const prin = colonos.filter((c) => !c.padre);
+  const activos = prin.filter((c) => !["esperar", "permiso", "dormir"].includes(c.actividad)).length;
+  document.getElementById("resumen").textContent = prin.length ? prin.length + " colonos · " + activos + " trabajando · " + salas.length + " salas" : "Sin colonos todavía";
+}
+
+function pintarTodo() { pintarBarra(); pintarAlertas(); pintarInspector(); pintarVentana(); pintarReloj(); }
+
+function seleccionar(id, centrar) {
+  seleccionado = id; ventana = null;
+  const p = pawns.get(id);
+  if (centrar && p) { cam.auto = false; cam.x = p.tx; cam.y = p.ty; cam.z = Math.max(cam.z, 1.3); }
+  pintarTodo();
+}
+
+/* ---------- datos ---------- */
+async function consultar() {
+  try {
+    const r = await fetch("/api/estado", { cache: "no-store" });
+    const d = await r.json();
+    conectado = true;
+    document.getElementById("estado-con").textContent = "En vivo · " + new Date().toLocaleTimeString("es-PE");
+    colonos = d.colonos || [];
+    ocultas = d.ocultas || 0;
+    const nombres = [...new Set(colonos.map((c) => c.sala))].sort((a, b) => a.localeCompare(b));
+    const roles = {};
+    for (const c of colonos) if (c.rol && !roles[c.sala]) roles[c.sala] = c.rol;
+    const firma = nombres.map((n) => n + "=" + (roles[n] || "")).join("|");
+    if (firma !== firmaSalas || !suelo) { firmaSalas = firma; construirMapa(nombres, roles); }
+    actualizarDestinos();
+    const aviso = document.getElementById("aviso");
+    if (d.error) { aviso.hidden = false; aviso.textContent = d.error; }
+    else if (!colonos.length) { aviso.hidden = false; aviso.innerHTML = "<b>Aún no hay colonos.</b><br>Abre Claude Code en cualquier carpeta y escríbele algo: su colono aparecerá aquí en unos segundos."; }
+    else aviso.hidden = true;
+    pintarTodo();
+  } catch (e) {
+    conectado = false;
+    document.getElementById("estado-con").textContent = "Sin conexión con la colonia";
+    const aviso = document.getElementById("aviso");
+    aviso.hidden = false;
+    aviso.innerHTML = "<b>Se perdió la conexión.</b><br>¿Sigue abierta la ventana negra de la colonia? Vuelve a abrir “Abrir Colonia”.";
+  }
+}
+
+/* ---------- controles ---------- */
+let arrastre = null;
+cv.addEventListener("pointerdown", (e) => { arrastre = { x: e.clientX, y: e.clientY, cx: cam.x, cy: cam.y, movio: false }; cv.setPointerCapture(e.pointerId); });
+cv.addEventListener("pointermove", (e) => {
+  if (!arrastre) return;
+  const dx = e.clientX - arrastre.x, dy = e.clientY - arrastre.y;
+  if (Math.abs(dx) + Math.abs(dy) > 4) { arrastre.movio = true; cam.auto = false; cv.classList.add("arrastrando"); }
+  if (arrastre.movio) { cam.x = arrastre.cx - dx / cam.z; cam.y = arrastre.cy - dy / cam.z; }
+});
+cv.addEventListener("pointerup", (e) => {
+  cv.classList.remove("arrastrando");
+  if (arrastre && !arrastre.movio) {
+    const [mx, my] = aMundo(e.clientX, e.clientY);
+    let mejor = null, dist = 26;
+    for (const p of pawns.values()) { const d = Math.hypot(p.x - mx, p.y - 4 - my); if (d < dist) { dist = d; mejor = p; } }
+    if (mejor) seleccionar(mejor.c.id, false); else { seleccionado = null; pintarTodo(); }
+  }
+  arrastre = null;
+});
+cv.addEventListener("dblclick", () => { cam.auto = true; });
+cv.addEventListener("wheel", (e) => {
+  e.preventDefault();
+  const [mx, my] = aMundo(e.clientX, e.clientY);
+  cam.auto = false;
+  cam.z = Math.min(3, Math.max(0.3, cam.z * (e.deltaY < 0 ? 1.12 : 1 / 1.12)));
+  const [nx, ny] = aMundo(e.clientX, e.clientY);
+  cam.x += mx - nx; cam.y += my - ny;
+}, { passive: false });
+for (const nombre of ["trabajo", "registro", "ayuda"]) {
+  document.getElementById("tab-" + nombre).addEventListener("click", () => { ventana = ventana === nombre ? null : nombre; pintarTodo(); });
+}
+document.addEventListener("keydown", (e) => { if (e.key === "Escape") { ventana = null; seleccionado = null; pintarTodo(); } });
+addEventListener("resize", ajustarCanvas);
+
+ajustarCanvas();
+construirMapa([], {});
+consultar();
+setInterval(consultar, 1500);
+setInterval(pintarReloj, 15000);
+requestAnimationFrame(cuadro);
+</script>
+</body>
+</html>

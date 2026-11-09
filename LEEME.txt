@@ -1,0 +1,18 @@
+COLONIA DE AGENTES
+==================
+
+Para abrirla: doble clic en "Abrir Colonia". Cada vez que la abres se actualiza sola.
+Se abre una ventana negra (dejala abierta, minimizada) y la colonia aparece en tu navegador.
+Para cerrarla: cierra la ventana negra.
+
+Que muestra:
+- Cada sesion de Claude Code de esta computadora es un colono.
+- Cada carpeta donde trabaja es una sala.
+- El colono camina al mueble de lo que esta haciendo (mesa = crea archivos, estante = lee,
+  consola = comandos, antena = internet, radio = manda ayudantes, pizarra = planifica).
+- "?" = termino y espera tus ordenes.  "!" = lleva rato quieto a mitad de algo: revisa su terminal.
+- Cama = sin actividad por mas de 20 minutos.
+- Muestra las sesiones usadas en las ultimas 72 horas.
+
+La colonia solo LEE las sesiones de Claude Code (carpeta .claude\projects). No cambia nada
+y solo se ve desde esta computadora.
