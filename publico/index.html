@@ -489,6 +489,7 @@ function pintarInspector() {
   el.innerHTML =
     "<h2><span>" + esc(c.nombre) + (c.padre ? ' <span class="etq">ayudante</span>' : "") + '</span><button aria-label="Cerrar">✕</button></h2>' +
     '<div class="fila"><span>Sala</span><span>' + esc(c.sala) + "</span></div>" +
+    '<div class="fila"><span>Carpeta</span><span style="overflow-wrap:anywhere;font-size:12px;color:#bdbdbd">' + esc(c.cwd) + "</span></div>" +
     '<div class="fila"><span>Función</span><span>' + (c.rol ? esc(c.rol) : '<span style="color:var(--tenue)">Sin función. Ver Ayuda → “Dar funciones”.</span>') + "</span></div>" +
     '<div class="fila"><span>Encargo</span><span>' + esc(c.titulo) + "</span></div>" +
     '<div class="fila"><span>Ahora</span><span><b>' + esc(c.verbo) + "</b>" + (c.detalle ? " · " + esc(c.detalle) : "") + "</span></div>" +
